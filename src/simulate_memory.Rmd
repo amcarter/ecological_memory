@@ -1,0 +1,116 @@
+---
+title: "memory_simulations"
+output: html_document
+date: '2022-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+source('src/simulation_functions.R')
+```
+
+## Ecological Memory Simulation
+
+We have ecosystem metabolism data from 3 rivers and 7 different terrestrial ecosystems. Our goal here is to simulate different configurations of ecological memory to test the models we have available before running them on real datasets. In each simulation, you can choose:  
+1) Which antecedent driver variable(s) are important 
+2) What antecedent intervals the drivers act on
+3) How important each time lag is in predicting the response variable
+
+# Equations, image from ogle
+
+
+## River ecosystems
+
+```{r}
+# Simulate ecosystem metabolism time series with memory lags:
+
+
+# Simulation for river sites ####
+dat <- read_csv('data/powell_selected_sites.csv')
+sites <- unique(dat$site_id)
+# simulate memory of discharge in GPP timeseries
+# model GPP as a linear function of light that decreases in the days following large floods
+dd <- filter(dat, site_id == sites[1])
+# parameters:
+beta_light = 10
+beta_Q_ante = -1
+
+light <- dd$Stream_PAR/max(dd$Stream_PAR, na.rm = T)
+# calculate antecedent discharge based on expected weights of 50% on t-1, 30% on t-2 and 20% on t-3
+ante_Q_ints <- calc_antecedent_drivers(driver = dd$discharge, nweights = 4)
+weights <- c(0.5, 0.3, 0.2, 0)
+ante_Q <- data.matrix(ante_Q_ints)%*%weights
+dd$GPP_mod <- beta_light * light + beta_Q_ante * ante_Q
+
+# Simulate litterfall (based on total litterfall/year = 100* max(LAI) gc/m2/y,
+# this is arbitrary and should be changed at some point)
+dd$litter <- calc_litter_from_LAI(dd)
+ggplot(dd, aes(date, LAI)) +
+    geom_line(col = 'forestgreen') + geom_line(aes(y = litter)) +
+    facet_wrap(.~year, scale = 'free_x') +
+    ylim(0,10)
+
+
+# Calculate antecedent GPP based on desired number of previous days (nweights)
+# and the weights (w) on each. sum(w) must equal 1.
+
+nweights <- 5
+w <- c(0, 0, 0, .5, .5) # here, antecedent P is a function of 4 and 5 days ago
+dd$P_ante <- calc_antecedent_GPP(dd$GPP_interp, nweights, w)
+ggplot(dd, aes(date, GPP_obs)) +
+    geom_line(col = 'forestgreen') + geom_line(aes(y = P_ante)) +
+    facet_wrap(.~year, scale = 'free_x')
+
+AR_f = 0.5# fraction of autotrophic respiration
+dd$AR <- -AR_f * dd$GPP_interp
+
+beta_p = 0.8 # the coefficient on antecedent productivity
+dd$HR_alg = -beta_p * dd$P_ante
+# Calculate underlying terrestrial C and detrital respiration
+# temperature dependent respiration rate coefficient
+dd$K_er <- calc_rate_coef(dd$temp.water, K_20 = 0.01)
+
+ndays <- nrow(dd)
+C0 = 100 # initial organic carbon in stream (g/m2)
+beta_s = 0.8# percent C lost to largest storm
+sigma_proc = 0.01 # process error (lognormal, % error in each timestep)
+sigma_obs = 0.1   # observation error (normally distributed)
+
+dd$C <- dd$HR <- NA_real_ # initialize columns for Carbon and heterotrophic respiration
+C_hat <- rep(C0, ndays)
+dd$C[1] <- exp(rnorm(1, log(C0), sigma_proc))
+dd$HR[1] <- -dd$K_er[1] * dd$C[1]
+
+for(i in 2:ndays){
+    C_hat[i] = (dd$C[i-1] + dd$litter[i] + dd$HR[i-1]) * (1 - beta_s * dd$Q[i])
+    dd$C[i] = exp(rnorm(1, log(C_hat[i]), sigma_proc))
+    dd$HR[i] = -dd$K_er[i] * dd$C[i]
+}
+
+dd$ER_latent = dd$AR + dd$HR_alg + dd$HR
+dd$ER_sim = rnorm(ndays, dd$ER_latent, sigma_obs)
+
+dd %>% filter(year == 2013) %>%
+    mutate(Q = log(discharge)) %>%
+    select(date, GPP = GPP_obs, ER_sim, C, temp.water, Q) %>%
+    pivot_longer(-date, names_to = 'variable', values_to = 'value') %>%
+    ggplot(aes(date, value)) +
+        geom_line() +
+        facet_wrap(.~variable, scale = 'free', ncol = 1)
+
+write_csv(dd, 'data_working/simulated_ER_nwis_01481500.csv')
+# Simulate ER function: ####
+# coming soon
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
