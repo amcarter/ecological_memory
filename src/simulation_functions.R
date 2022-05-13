@@ -129,3 +129,30 @@ calc_litter_from_LAI <- function(dd){
 
     return(tmp$litter)
 }
+
+
+# Stan Wrappers ####
+fill_stan_dat <- function(stan_dat){
+
+    for(i in 1:length(stan_dat)){
+        if(is.data.frame(stan_dat[[i]])) next
+        stan_dat[[i]] <- zoo::na.approx(stan_dat[[i]], na.rm = F)
+        if(sum(is.na(stan_dat[[i]])) != 0){
+            print('Your data cannot start or end with NA')
+            return()
+        }
+    }
+
+    return(stan_dat)
+}
+
+plot_post_sim <- function(fit, pars, vals, title = NULL, xlim = NULL){
+    dd <- data.frame(x = vals, y = length(vals):1)
+    p <- rstan::plot(fit, show_density = T, fill_color = 'grey',
+                     pars = pars) +
+        geom_point(data = dd, aes(x = x, y = y), size = 3,
+                   shape = 17, col = 'brown3')+
+        xlim(xlim)+
+        ggtitle(title)
+    return(p)
+}
